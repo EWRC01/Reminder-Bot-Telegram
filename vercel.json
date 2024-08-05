@@ -2,15 +2,17 @@
     "version": 2,
     "builds": [
       {
-        "src": "src/main.ts",
+        "src": "dist/main.js",
         "use": "@vercel/node"
       }
     ],
     "routes": [
       {
         "src": "/(.*)",
-        "dest": "src/main.ts",
-        "methods": ["GET"]
+        "dest": "dist/main.js"
       }
-    ]
+    ],
+    "env": {
+        "TELEGRAM_TOKEN": "6500185327:AAH4R8REURsEcUrCNM8kopl1UqhFDN4FX9E"
+    }
   }

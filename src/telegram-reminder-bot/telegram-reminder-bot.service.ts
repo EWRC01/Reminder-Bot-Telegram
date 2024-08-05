@@ -205,14 +205,16 @@ export class TelegramReminderBotService {
   }
 
   private scheduleReminder(chatId: number, medicineName: string, frequency: string, time: string, days: string[] = []) {
-    let cronExpression = '';
+    const userTimeZone = 'America/El_Salvador'; // Zona horaria para El Salvador
     const [hour, minute] = time.split(':').map(Number);
-
+  
+    let cronExpression = '';
     if (frequency === 'Diaria') {
+      // Convertir la hora local del usuario a la zona horaria
       cronExpression = `${minute} ${hour} * * *`; // Daily at the specified time
       new CronJob(cronExpression, () => {
         this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina ${medicineName}.`);
-      }).start();
+      }, null, true, userTimeZone);
     } else if (frequency === 'X veces a la semana') {
       const dayNumbers = { 'Lunes': 1, 'Martes': 2, 'Miércoles': 3, 'Jueves': 4, 'Viernes': 5, 'Sábado': 6, 'Domingo': 7 };
       days.forEach(day => {
@@ -220,8 +222,9 @@ export class TelegramReminderBotService {
         const weeklyCronExpression = `${minute} ${hour} * * ${dayNumber}`; // Weekly on selected days
         new CronJob(weeklyCronExpression, () => {
           this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina ${medicineName}.`);
-        }).start();
+        }, null, true, userTimeZone);
       });
     }
   }
+  
 }
