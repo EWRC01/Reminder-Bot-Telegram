@@ -36,7 +36,7 @@ export class TelegramReminderBotService {
           keyboard: [
             [{ text: 'Cancelar' }],
           ],
-        }
+        },
       };
 
       this.bot.sendMessage(chatId, 'Por favor, ingresa el nombre de la medicina.', opts);
@@ -136,7 +136,7 @@ export class TelegramReminderBotService {
 
               // Schedule the reminder
               this.scheduleReminder(chatId, this.userInputs[chatId].medicineName, this.userInputs[chatId].frequency, this.userInputs[chatId].time);
-              
+
               // Reset the input step for the next reminder
               delete this.userInputs[chatId];
             }
@@ -182,7 +182,7 @@ export class TelegramReminderBotService {
 
             // Schedule the reminder
             this.scheduleReminder(chatId, this.userInputs[chatId].medicineName, this.userInputs[chatId].frequency, this.userInputs[chatId].time, this.userInputs[chatId].days);
-            
+
             // Reset the input step for the next reminder
             delete this.userInputs[chatId];
           } else {
@@ -207,24 +207,69 @@ export class TelegramReminderBotService {
   private scheduleReminder(chatId: number, medicineName: string, frequency: string, time: string, days: string[] = []) {
     const userTimeZone = 'America/El_Salvador'; // Zona horaria para El Salvador
     const [hour, minute] = time.split(':').map(Number);
-  
+
     let cronExpression = '';
     if (frequency === 'Diaria') {
       // Convertir la hora local del usuario a la zona horaria
       cronExpression = `${minute} ${hour} * * *`; // Daily at the specified time
-      new CronJob(cronExpression, () => {
-        this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina ${medicineName}.`);
-      }, null, true, userTimeZone);
+      new CronJob(
+        cronExpression,
+        () => {
+          this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina ${medicineName}.`);
+          this.scheduleConfirmationPrompt(chatId, medicineName);
+        },
+        null,
+        true,
+        userTimeZone,
+      );
     } else if (frequency === 'X veces a la semana') {
-      const dayNumbers = { 'Lunes': 1, 'Martes': 2, 'Miércoles': 3, 'Jueves': 4, 'Viernes': 5, 'Sábado': 6, 'Domingo': 7 };
-      days.forEach(day => {
+      const dayNumbers = { Lunes: 1, Martes: 2, Miércoles: 3, Jueves: 4, Viernes: 5, Sábado: 6, Domingo: 7 };
+      days.forEach((day) => {
         const dayNumber = dayNumbers[day];
         const weeklyCronExpression = `${minute} ${hour} * * ${dayNumber}`; // Weekly on selected days
-        new CronJob(weeklyCronExpression, () => {
-          this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina ${medicineName}.`);
-        }, null, true, userTimeZone);
+        new CronJob(
+          weeklyCronExpression,
+          () => {
+            this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina ${medicineName}.`);
+            this.scheduleConfirmationPrompt(chatId, medicineName);
+          },
+          null,
+          true,
+          userTimeZone,
+        );
       });
     }
   }
-  
+
+  private scheduleConfirmationPrompt(chatId: number, medicineName: string) {
+    setTimeout(() => {
+      this.bot.sendMessage(chatId, `¿Has tomado tu medicina ${medicineName}?`, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: 'Sí', callback_data: 'confirm_yes' },
+              { text: 'No', callback_data: 'confirm_no' },
+            ],
+          ],
+        },
+      });
+
+      // Handle the callback query for "Yes" or "No"
+      this.bot.on('callback_query', (callbackQuery) => {
+        const data = callbackQuery.data;
+        const callbackChatId = callbackQuery.message.chat.id;
+
+        if (callbackChatId === chatId) {
+          if (data === 'confirm_yes') {
+            this.bot.sendMessage(callbackChatId, '¡Perfecto! Gracias por confirmar.');
+          } else if (data === 'confirm_no') {
+            this.bot.sendMessage(callbackChatId, 'Por favor, toma tu medicina lo antes posible.');
+          }
+        }
+
+        // Answer the callback query to remove the loading state on buttons
+        this.bot.answerCallbackQuery(callbackQuery.id);
+      });
+    }, 60000); // 60 seconds delay
+  }
 }
