@@ -42,6 +42,76 @@ export class TelegramReminderBotService {
       this.bot.sendMessage(chatId, 'Por favor, ingresa el nombre de la medicina.', opts);
     });
 
+    this.bot.onText(/\/water/, (msg) => {
+      const chatId = msg.chat.id;
+      this.userInputs[chatId] = { step: 1, height: 0, weight: 0 };
+
+      this.bot.sendMessage(chatId, 'Por favor, ingresa tu estatura en centímetros (Ejemplo: 170).');
+    });
+
+    this.bot.on('message', (msg) => {
+      const chatId = msg.chat.id;
+      const text = msg.text;
+
+      if (!this.userInputs[chatId]) {
+        return;
+      }
+
+      switch (this.userInputs[chatId].step) {
+        case 1:
+          if (!isNaN(Number(text)) && Number(text) > 0) {
+            this.userInputs[chatId].height = Number(text);
+            this.bot.sendMessage(chatId, 'Gracias. Ahora, ingresa tu peso en libras (Ejemplo: 150).');
+            this.userInputs[chatId].step = 2;
+          } else {
+            this.bot.sendMessage(chatId, 'Por favor, ingresa una estatura válida en centímetros.');
+          }
+          break;
+        case 2:
+          if (!isNaN(Number(text)) && Number(text) > 0) {
+            this.userInputs[chatId].weight = Number(text);
+            const waterIntake = this.calculateWaterIntake(this.userInputs[chatId].weight);
+            const glasses = Math.ceil(waterIntake / 0.25); // Cantidad de vasos (0.25L por vaso)
+            const frequency = Math.floor((12 * 60) / glasses); // Cada cuántos minutos debe tomar agua (12h activas)
+
+            this.bot.sendMessage(
+              chatId,
+              `Debes beber aproximadamente ${waterIntake.toFixed(
+                2,
+              )} litros de agua al día, lo que equivale a ${glasses} vasos. Te recordaré cada ${frequency} minutos.`,
+            );
+
+            // Schedule water reminders
+            this.scheduleWaterReminders(chatId, glasses, frequency);
+            delete this.userInputs[chatId];
+          } else {
+            this.bot.sendMessage(chatId, 'Por favor, ingresa un peso válido en libras.');
+          }
+          break;
+      }
+    });
+  }
+
+  private calculateWaterIntake(weightLb: number): number {
+    const weightKg = weightLb / 2.205;
+    return weightKg * 0.033; // Litros de agua recomendados
+  }
+
+  private scheduleWaterReminders(chatId: number, glasses: number, frequency: number): void {
+    const userTimeZone = 'America/El_Salvador';
+
+    for (let i = 0; i < glasses; i++) {
+      const job = new CronJob(
+        moment().add(frequency * i, 'minutes').toDate(),
+        () => {
+          this.bot.sendMessage(chatId, `¡Es hora de tomar un vaso de agua! 🥤`);
+        },
+        null,
+        true,
+        userTimeZone,
+      );
+    }
+
     this.bot.on('message', (msg) => {
       const chatId = msg.chat.id;
       const text = msg.text;
