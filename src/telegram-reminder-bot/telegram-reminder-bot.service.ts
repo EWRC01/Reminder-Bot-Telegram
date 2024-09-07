@@ -42,27 +42,6 @@ export class TelegramReminderBotService {
       this.bot.sendMessage(chatId, 'Por favor, ingresa el nombre de la medicina.', opts);
     });
 
-    this.bot.onText(/\/delete/, (msg) => {
-      const chatId = msg.chat.id;
-      
-      if (!this.reminders[chatId] || this.reminders[chatId].length === 0) {
-        this.bot.sendMessage(chatId, 'No tienes recordatorios activos para eliminar.');
-        return;
-      }
-
-      const reminderList = this.reminders[chatId]
-        .map((reminder, index) => `${index + 1}: ${reminder.medicineName}`)
-        .join('\n');
-      
-      this.bot.sendMessage(chatId, `Selecciona el recordatorio a eliminar:\n${reminderList}`, {
-        reply_markup: {
-          one_time_keyboard: true,
-          resize_keyboard: true,
-          keyboard: this.reminders[chatId].map((reminder, index) => [{ text: `${index + 1}` }]).concat([[{ text: 'Cancelar' }]]),
-        },
-      });
-    });
-
     this.bot.on('message', (msg) => {
       const chatId = msg.chat.id;
       const text = msg.text;
@@ -204,7 +183,7 @@ export class TelegramReminderBotService {
             // Schedule the reminder
             this.scheduleReminder(chatId, this.userInputs[chatId].medicineName, this.userInputs[chatId].frequency, this.userInputs[chatId].time, this.userInputs[chatId].days);
 
-            // Reset the input step for el próximo recordatorio
+            // Reset the input step for the next reminder
             delete this.userInputs[chatId];
           } else {
             this.bot.sendMessage(chatId, 'Por favor, selecciona un día válido o envía "Listo" cuando hayas terminado.', {
@@ -223,59 +202,74 @@ export class TelegramReminderBotService {
           this.bot.sendMessage(chatId, 'Entrada no válida, por favor usa el teclado para seleccionar una opción.');
       }
     });
-
-    this.bot.on('callback_query', (callbackQuery) => {
-      const chatId = callbackQuery.message.chat.id;
-      const data = callbackQuery.data;
-
-      if (data === 'confirm_yes' || data === 'confirm_no') {
-        if (data === 'confirm_yes') {
-          this.bot.sendMessage(chatId, '¡Perfecto! Gracias por confirmar.');
-        } else if (data === 'confirm_no') {
-          this.bot.sendMessage(chatId, 'Por favor, toma tu medicina lo antes posible.');
-        }
-
-        // Remove the loading state on buttons
-        this.bot.answerCallbackQuery(callbackQuery.id);
-      }
-    });
   }
 
-  private scheduleReminder(chatId: number, medicineName: string, frequency: string, time: string, days: string[] = []): void {
-    let cronExpression: string;
+  private scheduleReminder(chatId: number, medicineName: string, frequency: string, time: string, days: string[] = []) {
+    const userTimeZone = 'America/El_Salvador'; // Zona horaria para El Salvador
+    const [hour, minute] = time.split(':').map(Number);
 
+    let cronExpression = '';
     if (frequency === 'Diaria') {
-      cronExpression = `0 ${moment.tz(time, 'America/El_Salvador').minute()} ${moment.tz(time, 'America/El_Salvador').hour()} * * *`;
+      // Convertir la hora local del usuario a la zona horaria
+      cronExpression = `${minute} ${hour} * * *`; // Daily at the specified time
+      new CronJob(
+        cronExpression,
+        () => {
+          this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina ${medicineName}.`);
+          this.scheduleConfirmationPrompt(chatId, medicineName);
+        },
+        null,
+        true,
+        userTimeZone,
+      );
     } else if (frequency === 'X veces a la semana') {
-      const daysOfWeek = {
-        'Lunes': 1,
-        'Martes': 2,
-        'Miércoles': 3,
-        'Jueves': 4,
-        'Viernes': 5,
-        'Sábado': 6,
-        'Domingo': 0,
-      };
-      const cronDays = days.map(day => daysOfWeek[day]).join(',');
-      cronExpression = `0 ${moment.tz(time, 'America/El_Salvador').minute()} ${moment.tz(time, 'America/El_Salvador').hour()} * * ${cronDays}`;
-    } else {
-      console.error('Frecuencia de recordatorio no válida');
-      return;
+      const dayNumbers = { Lunes: 1, Martes: 2, Miércoles: 3, Jueves: 4, Viernes: 5, Sábado: 6, Domingo: 7 };
+      days.forEach((day) => {
+        const dayNumber = dayNumbers[day];
+        const weeklyCronExpression = `${minute} ${hour} * * ${dayNumber}`; // Weekly on selected days
+        new CronJob(
+          weeklyCronExpression,
+          () => {
+            this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina ${medicineName}.`);
+            this.scheduleConfirmationPrompt(chatId, medicineName);
+          },
+          null,
+          true,
+          userTimeZone,
+        );
+      });
     }
+  }
 
-    const job = new CronJob(cronExpression, () => {
-      this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina: ${medicineName}`);
-    });
+  private scheduleConfirmationPrompt(chatId: number, medicineName: string) {
+    setTimeout(() => {
+      this.bot.sendMessage(chatId, `¿Has tomado tu medicina ${medicineName}?`, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: 'Sí', callback_data: 'confirm_yes' },
+              { text: 'No', callback_data: 'confirm_no' },
+            ],
+          ],
+        },
+      });
 
-    job.start();
+      // Handle the callback query for "Yes" or "No"
+      this.bot.on('callback_query', (callbackQuery) => {
+        const data = callbackQuery.data;
+        const callbackChatId = callbackQuery.message.chat.id;
 
-    // Store the job
-    if (!this.reminders[chatId]) {
-      this.reminders[chatId] = [];
-    }
-    this.reminders[chatId].push({
-      job,
-      medicineName,
-    });
+        if (callbackChatId === chatId) {
+          if (data === 'confirm_yes') {
+            this.bot.sendMessage(callbackChatId, '¡Perfecto! Gracias por confirmar.');
+          } else if (data === 'confirm_no') {
+            this.bot.sendMessage(callbackChatId, 'Por favor, toma tu medicina lo antes posible.');
+          }
+        }
+
+        // Answer the callback query to remove the loading state on buttons
+        this.bot.answerCallbackQuery(callbackQuery.id);
+      });
+    }, 60000); // 60 seconds delay
   }
 }
