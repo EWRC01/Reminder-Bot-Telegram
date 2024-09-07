@@ -219,10 +219,11 @@ export class TelegramReminderBotService {
             });
             this.userInputs[chatId].step = 4;
           } else {
-            this.confirmReminder(chatId);
+            this.bot.sendMessage(chatId, 'Confirmando el recordatorio...');
+            this.scheduleReminders(chatId);
           }
         } else {
-          this.bot.sendMessage(chatId, 'Por favor, ingresa una hora válida en formato 24h (por ejemplo, 14:00).');
+          this.bot.sendMessage(chatId, 'Por favor, ingresa una hora válida (formato 24h, por ejemplo, 14:00).');
         }
         break;
       case 4:
@@ -231,82 +232,92 @@ export class TelegramReminderBotService {
           delete this.userInputs[chatId];
           return;
         }
-        const days = text.split(',').map((day) => day.trim());
-        this.userInputs[chatId].days = days;
-        this.confirmReminder(chatId);
+        const validDays = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+        if (validDays.includes(text)) {
+          if (!this.userInputs[chatId].days.includes(text)) {
+            this.userInputs[chatId].days.push(text);
+          }
+          this.bot.sendMessage(chatId, `Día ${text} agregado. ¿Deseas agregar otro día?`, {
+            reply_markup: {
+              one_time_keyboard: true,
+              resize_keyboard: true,
+              keyboard: [
+                ...validDays.map((day) => [{ text: day }]),
+                [{ text: 'Confirmar' }],
+                [{ text: 'Cancelar' }],
+              ],
+            },
+          });
+        } else if (text === 'Confirmar') {
+          this.bot.sendMessage(chatId, 'Confirmando el recordatorio...');
+          this.scheduleReminders(chatId);
+        } else {
+          this.bot.sendMessage(chatId, 'Selecciona un día válido o confirma el recordatorio.');
+        }
         break;
     }
   }
 
-  private confirmReminder(chatId: number): void {
-    const { medicineName, time, frequency, days } = this.userInputs[chatId];
-    let message = `Recordatorio confirmado:\n\nNombre de la medicina: ${medicineName}\nHora: ${time}\nFrecuencia: ${frequency}`;
-
-    if (frequency === 'X veces a la semana') {
-      message += `\nDías: ${days.join(', ')}`;
-    }
-
-    this.bot.sendMessage(chatId, message, {
-      reply_markup: {
-        one_time_keyboard: true,
-        resize_keyboard: true,
-        keyboard: [[{ text: 'Confirmar' }], [{ text: 'Cancelar' }]],
-      },
-    });
-    this.userInputs[chatId].step = 5;
-  }
-
-  private scheduleReminders(chatId: number): void {
-    const { medicineName, time, frequency, days } = this.userInputs[chatId];
-    let cronExpression = '';
-    if (frequency === 'Diaria') {
-      cronExpression = `0 ${moment(time, 'HH:mm').minute()} ${moment(time, 'HH:mm').hour()} * * *`;
-    } else if (frequency === 'X veces a la semana') {
-      const dayNumbers = days.map((day) => {
-        switch (day) {
-          case 'Lunes': return 1;
-          case 'Martes': return 2;
-          case 'Miércoles': return 3;
-          case 'Jueves': return 4;
-          case 'Viernes': return 5;
-          case 'Sábado': return 6;
-          case 'Domingo': return 0;
-          default: return null;
-        }
-      }).filter((day) => day !== null);
-
-      cronExpression = `0 ${moment(time, 'HH:mm').minute()} ${moment(time, 'HH:mm').hour()} * * ${dayNumbers.join(',')}`;
-    }
-
-    if (cronExpression) {
-      const job = new CronJob(cronExpression, () => {
-        this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar ${medicineName}.`);
-      });
-
-      job.start();
-      if (!this.reminders[chatId]) {
-        this.reminders[chatId] = [];
-      }
-      this.reminders[chatId].push({ medicineName, job });
-    }
+  private calculateWaterIntake(weight: number): number {
+    return weight * 0.033;
   }
 
   private scheduleWaterReminders(chatId: number, glasses: number, frequency: number): void {
-    const cronExpression = `*/${frequency} * * * *`;
-
-    const job = new CronJob(cronExpression, () => {
-      this.bot.sendMessage(chatId, `Es hora de beber agua. Intenta beber uno de tus ${glasses} vasos de agua recomendados.`);
-    });
-
-    job.start();
-    if (!this.reminders[chatId]) {
-      this.reminders[chatId] = [];
+    // Cancel any existing reminders
+    if (this.reminders[chatId]) {
+      this.reminders[chatId].forEach((reminder) => reminder.job.stop());
     }
-    this.reminders[chatId].push({ medicineName: 'Agua', job });
+
+    this.reminders[chatId] = [];
+
+    for (let i = 0; i < glasses; i++) {
+      const reminderJob = new CronJob(`*/${frequency} * * * *`, () => {
+        this.bot.sendMessage(chatId, 'Es hora de beber agua.');
+      });
+
+      reminderJob.start();
+      this.reminders[chatId].push({ job: reminderJob });
+    }
   }
 
-  private calculateWaterIntake(weight: number): number {
-    const weightInKg = weight * 0.453592; // Convert lbs to kg
-    return weightInKg * 0.033; // Recommended water intake in liters
+  private scheduleReminders(chatId: number): void {
+    const { medicineName, frequency, time, days } = this.userInputs[chatId];
+    const timeParts = time.split(':');
+    const hour = parseInt(timeParts[0], 10);
+    const minute = parseInt(timeParts[1], 10);
+    const tz = 'America/El_Salvador';
+    
+    // Cancel any existing reminders
+    if (this.reminders[chatId]) {
+      this.reminders[chatId].forEach((reminder) => reminder.job.stop());
+    }
+
+    this.reminders[chatId] = [];
+
+    let cronPattern = `${minute} ${hour} * * *`;
+
+    if (frequency === 'Diaria') {
+      cronPattern = `${minute} ${hour} * * *`;
+    } else if (frequency === 'X veces a la semana') {
+      const daysMap = {
+        Lunes: 1,
+        Martes: 2,
+        Miércoles: 3,
+        Jueves: 4,
+        Viernes: 5,
+        Sábado: 6,
+        Domingo: 0,
+      };
+      cronPattern = `${minute} ${hour} * * ${days.map(day => daysMap[day]).join(',')}`;
+    }
+
+    const reminderJob = new CronJob(cronPattern, () => {
+      this.bot.sendMessage(chatId, `Es hora de tomar ${medicineName}.`);
+    }, null, true, tz);
+
+    this.reminders[chatId].push({ job: reminderJob });
+
+    this.bot.sendMessage(chatId, `Recordatorio para ${medicineName} programado con éxito.`);
+    delete this.userInputs[chatId];
   }
 }
