@@ -46,6 +46,32 @@ export class TelegramReminderBotService {
       this.bot.sendMessage(chatId, 'Por favor, ingresa tu estatura en centímetros (Ejemplo: 170).');
     });
 
+    this.bot.onText(/\/delete/, (msg) => {
+      const chatId = msg.chat.id;
+      if (!this.reminders[chatId] || this.reminders[chatId].length === 0) {
+        this.bot.sendMessage(chatId, 'No tienes recordatorios de medicina programados.');
+        return;
+      }
+
+      this.userInputs[chatId] = { step: 'delete', reminderIndex: null };
+
+      const reminderNames = this.reminders[chatId].map((r, index) => ({
+        text: `Eliminar ${r.medicineName}`,
+        callback_data: index.toString(),
+      }));
+
+      const opts = {
+        reply_markup: {
+          inline_keyboard: [
+            ...reminderNames.map((reminder) => [{ text: reminder.text, callback_data: reminder.callback_data }]),
+            [{ text: 'Cancelar', callback_data: 'cancel' }],
+          ],
+        },
+      };
+
+      this.bot.sendMessage(chatId, 'Selecciona el recordatorio que deseas eliminar:', opts);
+    });
+
     this.bot.on('message', (msg) => {
       const chatId = msg.chat.id;
       const text = msg.text;
@@ -60,6 +86,32 @@ export class TelegramReminderBotService {
         this.handleMedicineReminderSteps(chatId, text, userStep);
       } else if (this.userInputs[chatId].hasOwnProperty('height')) {
         this.handleWaterIntakeSteps(chatId, text, userStep);
+      }
+    });
+
+    this.bot.on('callback_query', (callbackQuery) => {
+      const chatId = callbackQuery.message.chat.id;
+      const data = callbackQuery.data;
+
+      if (this.userInputs[chatId]?.step === 'delete') {
+        if (data === 'cancel') {
+          this.bot.sendMessage(chatId, 'El proceso de eliminación ha sido cancelado.');
+          delete this.userInputs[chatId];
+          return;
+        }
+
+        const reminderIndex = parseInt(data, 10);
+        if (!isNaN(reminderIndex) && this.reminders[chatId][reminderIndex]) {
+          const reminderName = this.reminders[chatId][reminderIndex].medicineName;
+          this.reminders[chatId][reminderIndex].job.stop();
+          this.reminders[chatId].splice(reminderIndex, 1);
+
+          this.bot.sendMessage(chatId, `El recordatorio para ${reminderName} ha sido eliminado.`);
+        } else {
+          this.bot.sendMessage(chatId, 'Selección inválida.');
+        }
+
+        delete this.userInputs[chatId];
       }
     });
   }
@@ -179,56 +231,50 @@ export class TelegramReminderBotService {
           delete this.userInputs[chatId];
           return;
         }
-        const validDays = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
-        if (validDays.includes(text) && !this.userInputs[chatId].days.includes(text)) {
-          this.userInputs[chatId].days.push(text);
-          this.bot.sendMessage(chatId, `Día ${text} registrado. Puedes seleccionar más días o enviar "Listo".`);
-        } else if (text === 'Listo') {
-          this.confirmReminder(chatId);
-        } else {
-          this.bot.sendMessage(chatId, 'Por favor, selecciona un día válido o envía "Listo".');
-        }
+        const days = text.split(',').map((day) => day.trim());
+        this.userInputs[chatId].days = days;
+        this.confirmReminder(chatId);
         break;
     }
   }
 
-  private confirmReminder(chatId: number) {
+  private confirmReminder(chatId: number): void {
+    const { medicineName, frequency, time, days } = this.userInputs[chatId];
+    const daysText = frequency === 'X veces a la semana' ? ` en los días: ${days.join(', ')}` : '';
     this.bot.sendMessage(
       chatId,
-      `Recordatorio establecido para ${this.userInputs[chatId].medicineName}. Hora: ${this.userInputs[chatId].time}.`,
+      `Recordatorio confirmado para la medicina ${medicineName}, con frecuencia ${frequency} a las ${time}${daysText}.`,
     );
-    this.scheduleReminder(
-      chatId,
-      this.userInputs[chatId].medicineName,
-      this.userInputs[chatId].frequency,
-      this.userInputs[chatId].time,
-      this.userInputs[chatId].days,
-    );
+
+    this.scheduleMedicineReminder(chatId, medicineName, frequency, time, days);
     delete this.userInputs[chatId];
   }
 
-  private calculateWaterIntake(weightLb: number): number {
-    const weightKg = weightLb / 2.205;
-    return weightKg * 0.033;
+  private calculateWaterIntake(weight: number): number {
+    return (weight * 2.2 * 0.0295735) / 2;
   }
 
   private scheduleWaterReminders(chatId: number, glasses: number, frequency: number): void {
     const userTimeZone = 'America/El_Salvador';
-
     for (let i = 0; i < glasses; i++) {
       const job = new CronJob(
-        moment().add(frequency * i, 'minutes').toDate(),
+        `*/${frequency} * * * *`,
         () => {
-          this.bot.sendMessage(chatId, `¡Es hora de tomar un vaso de agua! 🥤`);
+          this.bot.sendMessage(chatId, 'Es hora de tomar un vaso de agua!');
         },
         null,
         true,
         userTimeZone,
       );
+
+      if (!this.reminders[chatId]) {
+        this.reminders[chatId] = [];
+      }
+      this.reminders[chatId].push(job);
     }
   }
 
-  private scheduleReminder(
+  private scheduleMedicineReminder(
     chatId: number,
     medicineName: string,
     frequency: string,
@@ -269,6 +315,6 @@ export class TelegramReminderBotService {
     if (!this.reminders[chatId]) {
       this.reminders[chatId] = [];
     }
-    this.reminders[chatId].push(job);
+    this.reminders[chatId].push({ job, medicineName });
   }
 }
