@@ -42,6 +42,27 @@ export class TelegramReminderBotService {
       this.bot.sendMessage(chatId, 'Por favor, ingresa el nombre de la medicina.', opts);
     });
 
+    this.bot.onText(/\/delete/, (msg) => {
+      const chatId = msg.chat.id;
+      
+      if (!this.reminders[chatId] || this.reminders[chatId].length === 0) {
+        this.bot.sendMessage(chatId, 'No tienes recordatorios activos para eliminar.');
+        return;
+      }
+
+      const reminderList = this.reminders[chatId]
+        .map((reminder, index) => `${index + 1}: ${reminder.medicineName}`)
+        .join('\n');
+      
+      this.bot.sendMessage(chatId, `Selecciona el recordatorio a eliminar:\n${reminderList}`, {
+        reply_markup: {
+          one_time_keyboard: true,
+          resize_keyboard: true,
+          keyboard: this.reminders[chatId].map((reminder, index) => [{ text: `${index + 1}` }]).concat([[{ text: 'Cancelar' }]]),
+        },
+      });
+    });
+
     this.bot.on('message', (msg) => {
       const chatId = msg.chat.id;
       const text = msg.text;
