@@ -239,82 +239,74 @@ export class TelegramReminderBotService {
   }
 
   private confirmReminder(chatId: number): void {
-    const { medicineName, frequency, time, days } = this.userInputs[chatId];
-    const daysText = frequency === 'X veces a la semana' ? ` en los días: ${days.join(', ')}` : '';
-    this.bot.sendMessage(
-      chatId,
-      `Recordatorio confirmado para la medicina ${medicineName}, con frecuencia ${frequency} a las ${time}${daysText}.`,
-    );
+    const { medicineName, time, frequency, days } = this.userInputs[chatId];
+    let message = `Recordatorio confirmado:\n\nNombre de la medicina: ${medicineName}\nHora: ${time}\nFrecuencia: ${frequency}`;
 
-    this.scheduleMedicineReminder(chatId, medicineName, frequency, time, days);
-    delete this.userInputs[chatId];
+    if (frequency === 'X veces a la semana') {
+      message += `\nDías: ${days.join(', ')}`;
+    }
+
+    this.bot.sendMessage(chatId, message, {
+      reply_markup: {
+        one_time_keyboard: true,
+        resize_keyboard: true,
+        keyboard: [[{ text: 'Confirmar' }], [{ text: 'Cancelar' }]],
+      },
+    });
+    this.userInputs[chatId].step = 5;
   }
 
-  private calculateWaterIntake(weight: number): number {
-    return (weight * 2.2 * 0.0295735) / 2;
-  }
+  private scheduleReminders(chatId: number): void {
+    const { medicineName, time, frequency, days } = this.userInputs[chatId];
+    let cronExpression = '';
+    if (frequency === 'Diaria') {
+      cronExpression = `0 ${moment(time, 'HH:mm').minute()} ${moment(time, 'HH:mm').hour()} * * *`;
+    } else if (frequency === 'X veces a la semana') {
+      const dayNumbers = days.map((day) => {
+        switch (day) {
+          case 'Lunes': return 1;
+          case 'Martes': return 2;
+          case 'Miércoles': return 3;
+          case 'Jueves': return 4;
+          case 'Viernes': return 5;
+          case 'Sábado': return 6;
+          case 'Domingo': return 0;
+          default: return null;
+        }
+      }).filter((day) => day !== null);
 
-  private scheduleWaterReminders(chatId: number, glasses: number, frequency: number): void {
-    const userTimeZone = 'America/El_Salvador';
-    for (let i = 0; i < glasses; i++) {
-      const job = new CronJob(
-        `*/${frequency} * * * *`,
-        () => {
-          this.bot.sendMessage(chatId, 'Es hora de tomar un vaso de agua!');
-        },
-        null,
-        true,
-        userTimeZone,
-      );
+      cronExpression = `0 ${moment(time, 'HH:mm').minute()} ${moment(time, 'HH:mm').hour()} * * ${dayNumbers.join(',')}`;
+    }
 
+    if (cronExpression) {
+      const job = new CronJob(cronExpression, () => {
+        this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar ${medicineName}.`);
+      });
+
+      job.start();
       if (!this.reminders[chatId]) {
         this.reminders[chatId] = [];
       }
-      this.reminders[chatId].push(job);
+      this.reminders[chatId].push({ medicineName, job });
     }
   }
 
-  private scheduleMedicineReminder(
-    chatId: number,
-    medicineName: string,
-    frequency: string,
-    time: string,
-    days: string[],
-  ): void {
-    const userTimeZone = 'America/El_Salvador';
-    let cronTime = '';
+  private scheduleWaterReminders(chatId: number, glasses: number, frequency: number): void {
+    const cronExpression = `*/${frequency} * * * *`;
 
-    if (frequency === 'Diaria') {
-      const [hour, minute] = time.split(':');
-      cronTime = `${minute} ${hour} * * *`;
-    } else {
-      const daysMap: { [key: string]: number } = {
-        Lunes: 1,
-        Martes: 2,
-        Miércoles: 3,
-        Jueves: 4,
-        Viernes: 5,
-        Sábado: 6,
-        Domingo: 0,
-      };
-      const selectedDays = days.map((day) => daysMap[day]).join(',');
-      const [hour, minute] = time.split(':');
-      cronTime = `${minute} ${hour} * * ${selectedDays}`;
-    }
+    const job = new CronJob(cronExpression, () => {
+      this.bot.sendMessage(chatId, `Es hora de beber agua. Intenta beber uno de tus ${glasses} vasos de agua recomendados.`);
+    });
 
-    const job = new CronJob(
-      cronTime,
-      () => {
-        this.bot.sendMessage(chatId, `¡Es hora de tomar tu medicina: ${medicineName}!`);
-      },
-      null,
-      true,
-      userTimeZone,
-    );
-
+    job.start();
     if (!this.reminders[chatId]) {
       this.reminders[chatId] = [];
     }
-    this.reminders[chatId].push({ job, medicineName });
+    this.reminders[chatId].push({ medicineName: 'Agua', job });
+  }
+
+  private calculateWaterIntake(weight: number): number {
+    const weightInKg = weight * 0.453592; // Convert lbs to kg
+    return weightInKg * 0.033; // Recommended water intake in liters
   }
 }
