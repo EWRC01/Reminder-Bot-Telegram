@@ -14,6 +14,7 @@ export class TelegramReminderBotService {
     try {
       this.bot = new TelegramBot(this.token, { polling: true });
       this.initializeCommands();
+      this.initializeCallbackQueryHandler();
     } catch (error) {
       console.error('Error initializing Telegram bot:', error);
     }
@@ -231,60 +232,40 @@ export class TelegramReminderBotService {
     });
   }
 
-  private scheduleReminder(chatId: number, medicineName: string, frequency: string, time: string, days: string[] = []) {
-    const userTimeZone = 'America/El_Salvador'; // Zona horaria para El Salvador
-    const [hour, minute] = time.split(':');
+  private initializeCallbackQueryHandler(): void {
+    this.bot.on('callback_query', (callbackQuery) => {
+      const chatId = callbackQuery.message.chat.id;
+      const data = callbackQuery.data;
 
-    let cronExpression = `${minute} ${hour} * * *`; // Default to daily
+      if (data === 'confirm_yes') {
+        this.bot.sendMessage(chatId, '¡Perfecto! Gracias por confirmar.');
+      } else if (data === 'confirm_no') {
+        this.bot.sendMessage(chatId, 'Por favor, toma tu medicina lo antes posible.');
+      }
 
-    if (frequency === 'X veces a la semana') {
-      if (days.length === 0) return;
-
-      days.forEach(day => {
-        const dayOfWeek = this.getDayOfWeek(day);
-        cronExpression = `${minute} ${hour} * * ${dayOfWeek}`; // Weekly on selected days at the specified time
-        new CronJob(
-          cronExpression,
-          () => {
-            this.bot.sendMessage(chatId, `Recordatorio: Toma tu medicina ${medicineName}.`);
-            this.scheduleConfirmationPrompt(chatId, medicineName);
-          },
-          null,
-          true,
-          userTimeZone,
-        );
-      });
-    } else {
-      new CronJob(
-        cronExpression,
-        () => {
-          this.bot.sendMessage(chatId, `Recordatorio: Toma tu medicina ${medicineName}.`);
-          this.scheduleConfirmationPrompt(chatId, medicineName);
-        },
-        null,
-        true,
-        userTimeZone,
-      );
-    }
-
-    // Add to reminders
-    if (!this.reminders[chatId]) {
-      this.reminders[chatId] = [];
-    }
-    this.reminders[chatId].push({ medicineName, frequency, time, days });
+      // Answer the callback query to remove the loading state on buttons
+      this.bot.answerCallbackQuery(callbackQuery.id);
+    });
   }
 
-  private getDayOfWeek(day: string): number {
-    const daysMap: { [key: string]: number } = {
-      'Lunes': 1,
-      'Martes': 2,
-      'Miércoles': 3,
-      'Jueves': 4,
-      'Viernes': 5,
-      'Sábado': 6,
-      'Domingo': 0,
-    };
-    return daysMap[day] ?? 0;
+  private scheduleReminder(chatId: number, medicineName: string, frequency: string, time: string, days?: string[]): void {
+    const timezone = 'America/El_Salvador';
+    const timeFormat = 'HH:mm';
+    const reminderTime = moment.tz(time, timeFormat, timezone).format(timeFormat);
+
+    if (frequency === 'Diaria') {
+      new CronJob(`0 ${reminderTime} * * *`, () => {
+        this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina: ${medicineName}`);
+      }, null, true, timezone);
+    } else if (frequency === 'X veces a la semana' && days) {
+      days.forEach(day => {
+        const dayIndex = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'].indexOf(day);
+        const cronDay = dayIndex + 1; // Cron day index (1-7)
+        new CronJob(`0 ${reminderTime} * * ${cronDay}`, () => {
+          this.bot.sendMessage(chatId, `Recordatorio: Es hora de tomar tu medicina: ${medicineName}`);
+        }, null, true, timezone);
+      });
+    }
   }
 
   private scheduleConfirmationPrompt(chatId: number, medicineName: string) {
