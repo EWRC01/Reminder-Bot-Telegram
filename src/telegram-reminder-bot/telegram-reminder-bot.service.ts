@@ -234,10 +234,13 @@ export class TelegramReminderBotService {
         }
         const validDays = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
         if (validDays.includes(text)) {
+          if (!this.userInputs[chatId].days) {
+            this.userInputs[chatId].days = [];
+          }
           if (!this.userInputs[chatId].days.includes(text)) {
             this.userInputs[chatId].days.push(text);
           }
-          this.bot.sendMessage(chatId, `Día ${text} agregado. ¿Deseas agregar otro día?`, {
+          this.bot.sendMessage(chatId, `Día ${text} añadido. Selecciona otro día o confirma el recordatorio.`, {
             reply_markup: {
               one_time_keyboard: true,
               resize_keyboard: true,
@@ -252,72 +255,62 @@ export class TelegramReminderBotService {
           this.bot.sendMessage(chatId, 'Confirmando el recordatorio...');
           this.scheduleReminders(chatId);
         } else {
-          this.bot.sendMessage(chatId, 'Selecciona un día válido o confirma el recordatorio.');
+          this.bot.sendMessage(chatId, 'Por favor, selecciona un día válido o confirma el recordatorio.');
         }
         break;
     }
   }
 
-  private calculateWaterIntake(weight: number): number {
-    return weight * 0.033;
-  }
+  private scheduleReminders(chatId: number) {
+    const reminder = this.userInputs[chatId];
+    const time = reminder.time.split(':');
+    const hour = parseInt(time[0], 10);
+    const minute = parseInt(time[1], 10);
 
-  private scheduleWaterReminders(chatId: number, glasses: number, frequency: number): void {
-    // Cancel any existing reminders
-    if (this.reminders[chatId]) {
-      this.reminders[chatId].forEach((reminder) => reminder.job.stop());
+    const daysOfWeek = reminder.frequency === 'X veces a la semana' ? reminder.days : null;
+
+    const job = new CronJob(
+      `0 ${minute} ${hour} * * ${daysOfWeek ? daysOfWeek.map(day => this.getCronDay(day)).join(',') : '*'}`,
+      () => {
+        this.bot.sendMessage(chatId, `Es hora de tomar tu medicina: ${reminder.medicineName}`);
+      },
+      null,
+      true,
+      'America/El_Salvador',
+    );
+
+    if (!this.reminders[chatId]) {
+      this.reminders[chatId] = [];
     }
-
-    this.reminders[chatId] = [];
-
-    for (let i = 0; i < glasses; i++) {
-      const reminderJob = new CronJob(`*/${frequency} * * * *`, () => {
-        this.bot.sendMessage(chatId, 'Es hora de beber agua.');
-      });
-
-      reminderJob.start();
-      this.reminders[chatId].push({ job: reminderJob });
-    }
-  }
-
-  private scheduleReminders(chatId: number): void {
-    const { medicineName, frequency, time, days } = this.userInputs[chatId];
-    const timeParts = time.split(':');
-    const hour = parseInt(timeParts[0], 10);
-    const minute = parseInt(timeParts[1], 10);
-    const tz = 'America/El_Salvador';
-    
-    // Cancel any existing reminders
-    if (this.reminders[chatId]) {
-      this.reminders[chatId].forEach((reminder) => reminder.job.stop());
-    }
-
-    this.reminders[chatId] = [];
-
-    let cronPattern = `${minute} ${hour} * * *`;
-
-    if (frequency === 'Diaria') {
-      cronPattern = `${minute} ${hour} * * *`;
-    } else if (frequency === 'X veces a la semana') {
-      const daysMap = {
-        Lunes: 1,
-        Martes: 2,
-        Miércoles: 3,
-        Jueves: 4,
-        Viernes: 5,
-        Sábado: 6,
-        Domingo: 0,
-      };
-      cronPattern = `${minute} ${hour} * * ${days.map(day => daysMap[day]).join(',')}`;
-    }
-
-    const reminderJob = new CronJob(cronPattern, () => {
-      this.bot.sendMessage(chatId, `Es hora de tomar ${medicineName}.`);
-    }, null, true, tz);
-
-    this.reminders[chatId].push({ job: reminderJob });
-
-    this.bot.sendMessage(chatId, `Recordatorio para ${medicineName} programado con éxito.`);
+    this.reminders[chatId].push({ medicineName: reminder.medicineName, job });
     delete this.userInputs[chatId];
+  }
+
+  private getCronDay(day: string): string {
+    const daysMap = {
+      Lunes: '1',
+      Martes: '2',
+      Miércoles: '3',
+      Jueves: '4',
+      Viernes: '5',
+      Sábado: '6',
+      Domingo: '0',
+    };
+    return daysMap[day];
+  }
+
+  private scheduleWaterReminders(chatId: number, glasses: number, frequency: number) {
+    const reminderJob = new CronJob(`*/${frequency} * * * *`, () => {
+      this.bot.sendMessage(chatId, `Es hora de beber agua. ¡Toma un vaso de agua!`);
+    }, null, true, 'America/El_Salvador');
+
+    if (!this.reminders[chatId]) {
+      this.reminders[chatId] = [];
+    }
+    this.reminders[chatId].push({ medicineName: 'Recordatorio de agua', job: reminderJob });
+  }
+
+  private calculateWaterIntake(weight: number): number {
+    return (weight / 2.2) * 35 / 1000;
   }
 }
